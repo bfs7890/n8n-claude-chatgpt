@@ -1,0 +1,20 @@
+{
+  "name": "n8n-claude-bridge",
+  "version": "1.0.0",
+  "description": "Express bridge that lets n8n send prompts to Claude Code via the official Claude Agent SDK, without shelling out to the CLI.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.215",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2"
+  },
+  "license": "MIT"
+}
