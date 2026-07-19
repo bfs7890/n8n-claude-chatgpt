@@ -5,6 +5,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { randomUUID } = require('crypto');
+const { spawn } = require('child_process');
 const { query } = require('@anthropic-ai/claude-agent-sdk');
 
 const PORT = parseInt(process.env.PORT, 10) || 3000;
@@ -64,6 +65,38 @@ app.post('/claude', async (req, res) => {
         maxTurns: MAX_TURNS,
         abortController: controller,
         ...(MODEL ? { model: MODEL } : {}),
+        // Diagnostic only: the SDK's built-in spawn path (spawnLocalProcess)
+        // catches child.on('error', ...) internally and replaces it with a
+        // generic message, discarding the original error object entirely.
+        // This override calls the exact same child_process.spawn(...) with
+        // the exact same arguments the SDK would have used itself, so
+        // behavior is unchanged; the only addition is a listener that logs
+        // the raw pre-wrapping error. The SDK still attaches its own
+        // listeners to the returned child afterwards and behaves as normal.
+        spawnClaudeCodeProcess: (spawnOptions) => {
+          const { command, args, cwd, env, signal } = spawnOptions;
+          const child = spawn(command, args, {
+            cwd,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            signal,
+            env,
+            windowsHide: true,
+          });
+          child.on('error', (err) => {
+            console.error(`[${requestId}] RAW spawn error (pre-SDK-wrapping):`, {
+              message: err.message,
+              name: err.name,
+              code: err.code,
+              errno: err.errno,
+              syscall: err.syscall,
+              path: err.path,
+              spawnargs: err.spawnargs,
+              cause: err.cause,
+              stack: err.stack,
+            });
+          });
+          return child;
+        },
       },
     });
 
