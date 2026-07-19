@@ -9,7 +9,11 @@ const { spawn } = require('child_process');
 const { query } = require('@anthropic-ai/claude-agent-sdk');
 
 const PORT = parseInt(process.env.PORT, 10) || 3000;
-const HOST = process.env.HOST || '0.0.0.0';
+// '::' binds dual-stack (IPv4 + IPv6) on Windows/Linux/macOS alike, so both
+// http://127.0.0.1 and http://[::1] (what "localhost" resolves to on many
+// Windows setups) reach the server. Binding '0.0.0.0' only covers IPv4 and
+// leaves IPv6 callers getting ECONNREFUSED.
+const HOST = process.env.HOST || '::';
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 const MAX_BODY_SIZE = process.env.MAX_BODY_SIZE || '2mb';
 
@@ -183,23 +187,50 @@ app.use((err, req, res, next) => {
   res.status(500).json({ success: false, error: 'Internal server error.' });
 });
 
-const server = app.listen(PORT, HOST, () => {
-  console.log(`n8n-claude-bridge listening on http://${HOST}:${PORT}`);
-  console.log(`  CLAUDE_CWD           = ${CLAUDE_CWD}`);
-  console.log(`  CLAUDE_PERMISSION_MODE = ${PERMISSION_MODE}`);
-  console.log(`  REQUEST_TIMEOUT_MS   = ${REQUEST_TIMEOUT_MS}`);
-});
+let server;
 
-// Node's default 5-minute request/headers timeout would kill long code-gen
-// calls mid-flight. We enforce our own ceiling via AbortController instead,
-// so disable Node's socket-level timeouts here.
-server.requestTimeout = 0;
-server.headersTimeout = 0;
-server.keepAliveTimeout = REQUEST_TIMEOUT_MS + 5000;
+function bindServer(host) {
+  const srv = app.listen(PORT, host);
+
+  srv.on('listening', () => {
+    server = srv;
+    const displayHost = host === '::' ? '[::]' : host;
+    console.log(`n8n-claude-bridge listening on http://${displayHost}:${PORT}`);
+    console.log(`  CLAUDE_CWD           = ${CLAUDE_CWD}`);
+    console.log(`  CLAUDE_PERMISSION_MODE = ${PERMISSION_MODE}`);
+    console.log(`  REQUEST_TIMEOUT_MS   = ${REQUEST_TIMEOUT_MS}`);
+  });
+
+  srv.on('error', (err) => {
+    // Some environments (certain containers/networks) have IPv6 disabled
+    // entirely, in which case binding '::' fails outright. Fall back to
+    // IPv4-only rather than crashing the whole server over it.
+    if (host !== '0.0.0.0' && (err.code === 'EAFNOSUPPORT' || err.code === 'EADDRNOTAVAIL')) {
+      console.warn(`Could not bind host "${host}" (${err.code}); falling back to 0.0.0.0 (IPv4 only, no IPv6 loopback support).`);
+      bindServer('0.0.0.0');
+    } else {
+      console.error('Failed to start server:', err);
+      process.exit(1);
+    }
+  });
+
+  // Node's default 5-minute request/headers timeout would kill long code-gen
+  // calls mid-flight. We enforce our own ceiling via AbortController instead,
+  // so disable Node's socket-level timeouts here.
+  srv.requestTimeout = 0;
+  srv.headersTimeout = 0;
+  srv.keepAliveTimeout = REQUEST_TIMEOUT_MS + 5000;
+}
+
+bindServer(HOST);
 
 function shutdown(signal) {
   console.log(`${signal} received, shutting down...`);
-  server.close(() => process.exit(0));
+  if (server) {
+    server.close(() => process.exit(0));
+  } else {
+    process.exit(0);
+  }
   setTimeout(() => process.exit(1), 10000).unref();
 }
 
