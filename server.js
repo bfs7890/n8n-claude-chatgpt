@@ -121,9 +121,20 @@ app.post('/claude', async (req, res) => {
     }
 
     console.error(`[${requestId}] Claude query failed:`, err);
+
+    let cause = err && err.cause;
+    let causeMessage;
+    if (cause) {
+      causeMessage = cause.message || String(cause);
+    }
+
     return res.status(500).json({
       success: false,
       error: err && err.message ? err.message : 'Internal server error.',
+      errorName: err && err.name,
+      errorCode: err && (err.code || err.errno),
+      errorSyscall: err && err.syscall,
+      errorCause: causeMessage,
       requestId,
     });
   }
